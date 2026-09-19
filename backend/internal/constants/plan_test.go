@@ -13,6 +13,8 @@ func TestPlanTransitions(t *testing.T) {
 		{"submit modeled", PlanModeled, PlanPendingReview, true},
 		{"approve review", PlanPendingReview, PlanApprovedTraining, true},
 		{"archive approval", PlanApprovedTraining, PlanArchived, true},
+		{"supervisor return to draft", PlanPendingReview, PlanDraft, true},
+		{"approved cannot return to draft", PlanApprovedTraining, PlanDraft, false},
 		{"cannot skip review", PlanModeled, PlanApprovedTraining, false},
 		{"archive terminal", PlanArchived, PlanDraft, false},
 	}

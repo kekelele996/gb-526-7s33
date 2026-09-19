@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"commercial-diving-decompression-control/backend/internal/model"
 	"commercial-diving-decompression-control/backend/internal/repository"
 	"commercial-diving-decompression-control/backend/internal/util"
+	"gorm.io/gorm"
 )
 
 type DecompressionAssessmentService struct {
@@ -62,6 +64,10 @@ func (s *DecompressionAssessmentService) Run(ctx context.Context, planID uint, r
 	if plan.PlanStatus != constants.PlanDraft {
 		return dto.AssessmentResponse{}, util.Conflict("PLAN_NOT_DRAFT", "only a draft plan can run a new immutable assessment", nil)
 	}
+	supersedes, err := s.returnedPredecessor(ctx, plan)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
 	profile, err := s.profiles.Get(ctx, plan.DiverProfileID)
 	if err != nil {
 		return dto.AssessmentResponse{}, err
@@ -85,10 +91,65 @@ func (s *DecompressionAssessmentService) Run(ctx context.Context, planID uint, r
 	actor.EntityType = "decompression_assessment"
 	actor.BeforeSummary = fmt.Sprintf("plan=%d version=%d algorithm=%s segments=%d", planID, plan.Version, s.modelVersion, len(segments))
 	actor.AfterSummary = fmt.Sprintf("score=%.2f compartments=%d flags=%d immutable=true", result.ComparativeScore, len(result.Curves), len(result.RiskFlags))
-	if err := s.assessments.CreateModeled(ctx, plan, &item, actor); err != nil {
+	if supersedes != nil {
+		actor.AfterSummary += fmt.Sprintf(" supersedes=%d", supersedes.ID)
+	}
+	if err := s.assessments.CreateModeled(ctx, plan, &item, supersedes, actor); err != nil {
 		return dto.AssessmentResponse{}, err
 	}
 	return dto.DecodeAssessment(item)
+}
+
+// returnedPredecessor resolves the latest superseded assessment that the new
+// run would replace. A supervisor return forces the planner to change the
+// exposure segments (which advances the plan input version) before re-running.
+func (s *DecompressionAssessmentService) returnedPredecessor(ctx context.Context, plan model.DivePlan) (*model.DecompressionAssessment, error) {
+	latest, err := s.assessments.LatestByPlan(ctx, plan.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if latest.AssessmentStatus != constants.AssessmentSuperseded {
+		return nil, nil
+	}
+	if latest.ReturnPlanVersion == plan.Version {
+		return nil, util.Conflict("SEGMENTS_UNCHANGED_AFTER_RETURN", "supervisor returned this plan for recalculation; modify exposure segments before re-running", nil)
+	}
+	return &latest, nil
+}
+
+func (s *DecompressionAssessmentService) Return(ctx context.Context, id uint, req dto.ReturnAssessmentRequest, actor audit.Entry) (dto.AssessmentResponse, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if len(reason) < 3 {
+		return dto.AssessmentResponse{}, util.Unprocessable("RETURN_REASON_REQUIRED", "a return reason of at least 3 characters is required", nil)
+	}
+	assessment, err := s.assessments.Get(ctx, id)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	plan, err := s.plans.Get(ctx, assessment.PlanID)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	if plan.Version != req.Version {
+		return dto.AssessmentResponse{}, util.Conflict("PLAN_VERSION_CONFLICT", "dive plan was changed by another user", nil)
+	}
+	if plan.PlanStatus != constants.PlanPendingReview {
+		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", fmt.Sprintf("cannot return a plan in %s for recalculation", plan.PlanStatus), nil)
+	}
+	if assessment.AssessmentStatus != string(constants.PlanPendingReview) {
+		return dto.AssessmentResponse{}, util.Conflict("ASSESSMENT_STATE_CONFLICT", "only a pending supervisor review assessment can be returned", nil)
+	}
+	actor.Action = "decompression_assessment.return"
+	actor.EntityType = "decompression_assessment"
+	actor.BeforeSummary = string(constants.PlanPendingReview)
+	actor.AfterSummary = fmt.Sprintf("%s reason=%s snapshot=retained", constants.AssessmentSuperseded, reason)
+	if err := s.assessments.ReturnForRecalculation(ctx, plan, assessment, reason, actor.ActorID, actor); err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *DecompressionAssessmentService) Submit(ctx context.Context, id uint, req dto.TransitionPlanRequest, actor audit.Entry) (dto.AssessmentResponse, error) {

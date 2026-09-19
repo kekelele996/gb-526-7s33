@@ -10,6 +10,11 @@ const (
 	PlanArchived         PlanStatus = "archived"
 )
 
+// AssessmentSuperseded marks an immutable assessment whose plan was returned
+// to draft by a supervisor; the row and its input snapshot are preserved but
+// can no longer be submitted or approved.
+const AssessmentSuperseded = "superseded"
+
 var planTransitions = map[PlanStatus]map[PlanStatus]bool{
 	PlanDraft:            {PlanModeled: true},
 	PlanModeled:          {PlanDraft: true, PlanPendingReview: true},

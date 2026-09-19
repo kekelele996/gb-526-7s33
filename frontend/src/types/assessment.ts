@@ -51,6 +51,12 @@ export interface DecompressionAssessment {
   highest_risk_band: RiskBand
   comparative_score: number
   assumptions: ModelAssumptions
+  return_reason: string
+  returned_by?: number
+  returned_at?: string
+  return_plan_version: number
+  superseded_by_id?: number
+  supersedes_id?: number
   created_at: string
   reviewed_at?: string
   safety_disclaimer: string

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Alert, Button, CircularProgress, IconButton, MenuItem, TextField, Tooltip } from '@mui/material'
-import { ArrowDown, ArrowUp, Beaker, CirclePlus, Play, Route, Rows3 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Beaker, CirclePlus, Play, Route, Rows3, Undo2 } from 'lucide-react'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PlanStatusBadge } from '@/components/common/PlanStatusBadge'
+import { listAssessments } from '@/api/assessment'
 import { useAuth } from '@/hooks/useAuth'
 import { useAssessmentStore } from '@/stores/assessment'
 import { useDiverStore } from '@/stores/diver'
 import { usePlanStore } from '@/stores/plan'
 import { useSegmentStore } from '@/stores/segment'
+import type { DecompressionAssessment } from '@/types/assessment'
 import type { CreateDivePlan } from '@/types/plan'
 import type { CreateExposureSegment, SegmentType } from '@/types/segment'
 
@@ -26,9 +28,20 @@ export function PlansPage() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [latestAssessment, setLatestAssessment] = useState<DecompressionAssessment | null>(null)
   useEffect(() => { void plans.load(); void divers.load() }, [plans.load, divers.load])
   useEffect(() => { if (plans.selected) void segments.load(plans.selected.id) }, [plans.selected?.id])
   const selected = plans.selected
+  useEffect(() => {
+    if (!selected) { setLatestAssessment(null); return }
+    let cancelled = false
+    listAssessments(selected.id)
+      .then((page) => { if (!cancelled) setLatestAssessment(page.items[0] ?? null) })
+      .catch(() => { if (!cancelled) setLatestAssessment(null) })
+    return () => { cancelled = true }
+  }, [selected?.id, selected?.version])
+  const returnedAssessment = selected?.plan_status === 'draft' && latestAssessment?.assessment_status === 'superseded' ? latestAssessment : null
+  const rerunLocked = Boolean(returnedAssessment && selected && selected.version === returnedAssessment.return_plan_version)
   const choosePlan = async (id: number) => { await plans.select(id); await segments.load(id); setNotice(null) }
   const createPlan = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setLocalError(null)
@@ -89,7 +102,8 @@ export function PlansPage() {
         <section className="sequence-board">
           {selected ? <>
             <div className="sequence-head"><div><span className="eyebrow">PLAN INPUT / V{selected.version}</span><h2>{selected.plan_code}</h2><p>{selected.diver_profile_code} · {selected.worksite_pressure_bar.toFixed(2)} bar · O2 {(selected.breathing_mix.o2 * 100).toFixed(0)} / He {(selected.breathing_mix.he * 100).toFixed(0)}</p></div><PlanStatusBadge status={selected.plan_status} /></div>
-            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span></div>{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0}>Run model</Button></div>}</div>
+            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span></div>{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Tooltip title={rerunLocked ? 'Supervisor returned this plan — modify the exposure segments before re-running' : ''}><span><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0 || rerunLocked}>Run model</Button></span></Tooltip></div>}</div>
+            {returnedAssessment && <Alert severity="warning" icon={<Undo2 size={18} />}>Supervisor returned assessment #{returnedAssessment.id}: “{returnedAssessment.return_reason}” {rerunLocked ? 'Modify the exposure segments to unlock a new model run.' : 'Segments updated — the model can be re-run.'}</Alert>}
             {formMode === 'segment' && <form className="segment-form" onSubmit={createSegment}>
               <span className="sequence-token">{String(segments.items.length + 1).padStart(2, '0')}</span>
               <TextField select label="Type" value={segmentForm.segment_type} onChange={(event) => setSegmentForm({ ...segmentForm, segment_type: event.target.value as SegmentType })}>{['descent', 'bottom', 'transit', 'ascent', 'surface'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField>

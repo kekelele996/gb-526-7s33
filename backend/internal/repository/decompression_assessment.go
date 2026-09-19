@@ -56,7 +56,7 @@ func (r *DecompressionAssessmentRepository) LatestByPlan(ctx context.Context, pl
 	return item, nil
 }
 
-func (r *DecompressionAssessmentRepository) CreateModeled(ctx context.Context, plan model.DivePlan, item *model.DecompressionAssessment, entry audit.Entry) error {
+func (r *DecompressionAssessmentRepository) CreateModeled(ctx context.Context, plan model.DivePlan, item *model.DecompressionAssessment, supersedes *model.DecompressionAssessment, entry audit.Entry) error {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.DivePlan{}).Where("id = ? AND version = ? AND plan_status = ?", plan.ID, plan.Version, constants.PlanDraft).Updates(map[string]any{"plan_status": constants.PlanModeled, "version": gorm.Expr("version + 1")})
 		if result.Error != nil {
@@ -65,8 +65,20 @@ func (r *DecompressionAssessmentRepository) CreateModeled(ctx context.Context, p
 		if result.RowsAffected != 1 {
 			return util.Conflict("PLAN_VERSION_CONFLICT", "plan must remain at the requested draft version", nil)
 		}
+		if supersedes != nil {
+			item.SupersedesID = &supersedes.ID
+		}
 		if err := tx.Create(item).Error; err != nil {
 			return fmt.Errorf("create immutable assessment: %w", err)
+		}
+		if supersedes != nil {
+			link := tx.Model(&model.DecompressionAssessment{}).Where("id = ? AND assessment_status = ? AND superseded_by_id IS NULL", supersedes.ID, constants.AssessmentSuperseded).Update("superseded_by_id", item.ID)
+			if link.Error != nil {
+				return fmt.Errorf("link superseded assessment: %w", link.Error)
+			}
+			if link.RowsAffected != 1 {
+				return util.Conflict("ASSESSMENT_STATE_CONFLICT", "superseded assessment was already replaced concurrently", nil)
+			}
 		}
 		entry.EntityID = item.ID
 		if err := r.audit.RecordWithDB(ctx, tx, entry); err != nil {
@@ -82,6 +94,48 @@ func (r *DecompressionAssessmentRepository) CreateModeled(ctx context.Context, p
 	})
 	if err != nil {
 		return fmt.Errorf("create modeled assessment transaction: %w", err)
+	}
+	return nil
+}
+
+func (r *DecompressionAssessmentRepository) ReturnForRecalculation(ctx context.Context, plan model.DivePlan, assessment model.DecompressionAssessment, reason string, actorID uint, entry audit.Entry) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		planResult := tx.Model(&model.DivePlan{}).Where("id = ? AND version = ? AND plan_status = ?", plan.ID, plan.Version, constants.PlanPendingReview).Updates(map[string]any{"plan_status": constants.PlanDraft, "version": gorm.Expr("version + 1")})
+		if planResult.Error != nil {
+			return fmt.Errorf("return plan to draft: %w", planResult.Error)
+		}
+		if planResult.RowsAffected != 1 {
+			return util.Conflict("PLAN_VERSION_CONFLICT", "plan state or version changed concurrently", nil)
+		}
+		now := time.Now().UTC()
+		assessmentChanges := map[string]any{
+			"assessment_status":   constants.AssessmentSuperseded,
+			"return_reason":       reason,
+			"returned_by":         actorID,
+			"returned_at":         now,
+			"return_plan_version": plan.Version + 1,
+		}
+		assessmentResult := tx.Model(&model.DecompressionAssessment{}).Where("id = ? AND assessment_status = ?", assessment.ID, string(constants.PlanPendingReview)).Updates(assessmentChanges)
+		if assessmentResult.Error != nil {
+			return fmt.Errorf("mark assessment superseded: %w", assessmentResult.Error)
+		}
+		if assessmentResult.RowsAffected != 1 {
+			return util.Conflict("ASSESSMENT_STATE_CONFLICT", "assessment review state changed concurrently", nil)
+		}
+		entry.EntityID = assessment.ID
+		if err := r.audit.RecordWithDB(ctx, tx, entry); err != nil {
+			return err
+		}
+		planEntry := entry
+		planEntry.Action = "dive_plan.transition"
+		planEntry.EntityType = "dive_plan"
+		planEntry.EntityID = plan.ID
+		planEntry.BeforeSummary = string(constants.PlanPendingReview)
+		planEntry.AfterSummary = fmt.Sprintf("%s returned assessment=%d reason=%s", constants.PlanDraft, assessment.ID, reason)
+		return r.audit.RecordWithDB(ctx, tx, planEntry)
+	})
+	if err != nil {
+		return fmt.Errorf("return assessment transaction: %w", err)
 	}
 	return nil
 }

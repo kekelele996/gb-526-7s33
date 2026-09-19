@@ -128,6 +128,7 @@ button, input, select, textarea { font: inherit; }
 .status-pending_supervisor_review { color: #79500f !important; background: var(--amber-soft) !important; }
 .status-approved_for_training { color: #14564f !important; background: var(--green-soft) !important; }
 .status-archived { color: #626966 !important; background: #d9dddb !important; }
+.status-superseded { color: #7a3b2e !important; background: #f3ddd6 !important; }
 
 .plan-workbench { display: grid; grid-template-columns: 310px minmax(0,1fr); min-height: 560px; background: var(--paper); border: 1px solid var(--line); }
 .plan-index { max-height: 690px; overflow-y: auto; }
@@ -193,6 +194,7 @@ button, input, select, textarea { font: inherit; }
 .score-dial strong { color: var(--green); font-size: 31px; line-height: 1.1; }
 .score-dial small { color: var(--red); font-size: 8px; }
 .review-bar { display: grid; grid-template-columns: auto minmax(190px,1fr) auto; gap: 10px; align-items: center; padding: 12px 17px; background: #eef2ee; border-bottom: 1px solid var(--line); }
+.return-bar { display: grid; grid-template-columns: auto minmax(190px,1fr) auto; gap: 10px; align-items: center; padding: 12px 17px; background: #f6efe8; border-bottom: 1px solid var(--line); color: #7a4a12; }
 .risk-section { padding: 18px; }
 .risk-list { display: grid; gap: 7px; }
 .risk-row { display: grid; grid-template-columns: 25px minmax(0,1fr) auto; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 4px; }

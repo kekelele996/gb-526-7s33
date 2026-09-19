@@ -9,4 +9,5 @@ export const runAssessment = (planId: number, planVersion: number) => request<De
 const transition = (id: number, target_status: PlanStatus, version: number, reason: string, action: 'submit' | 'approve') => request<DecompressionAssessment>(`/assessments/${id}/${action}`, { method: 'POST', body: JSON.stringify({ target_status, version, reason }) })
 export const submitAssessment = (id: number, version: number, reason: string) => transition(id, 'pending_supervisor_review', version, reason, 'submit')
 export const approveAssessment = (id: number, version: number, reason: string) => transition(id, 'approved_for_training', version, reason, 'approve')
+export const returnAssessment = (id: number, version: number, reason: string) => request<DecompressionAssessment>(`/assessments/${id}/return`, { method: 'POST', body: JSON.stringify({ version, reason }) })
 export const compareAssessments = (leftId: number, rightId: number) => request<AssessmentComparison>(`/assessments/${leftId}/compare?other_id=${rightId}`)

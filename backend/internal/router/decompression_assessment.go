@@ -13,4 +13,5 @@ func RegisterDecompressionAssessmentRoutes(api *gin.RouterGroup, h *handler.Deco
 	assessments.GET("/:id/compare", h.Compare)
 	assessments.POST("/:id/submit", write, h.Submit)
 	assessments.POST("/:id/approve", review, h.Approve)
+	assessments.POST("/:id/return", review, h.Return)
 }

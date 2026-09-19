@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, MenuItem, TextField } from '@mui/material'
-import { ArrowRight, CheckCheck, GitCompareArrows, ShieldAlert, Send } from 'lucide-react'
+import { ArrowRight, CheckCheck, GitCompareArrows, ShieldAlert, Send, Undo2 } from 'lucide-react'
 import { AssumptionPanel } from '@/components/common/AssumptionPanel'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PlanStatusBadge } from '@/components/common/PlanStatusBadge'
@@ -16,6 +16,7 @@ export function AssessmentsPage() {
   const assessments = useAssessmentStore()
   const [compareId, setCompareId] = useState<number>(0)
   const [reason, setReason] = useState('Reviewed training assumptions and versioned model evidence.')
+  const [returnReason, setReturnReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -34,6 +35,16 @@ export function AssessmentsPage() {
     } catch (error) { setLocalError(error instanceof Error ? error.message : 'Review action failed') }
     finally { setBusy(false) }
   }
+  const returnToDraft = async () => {
+    if (!selected) return
+    setBusy(true); setLocalError(null); setNotice(null)
+    try {
+      const plan = await getPlan(selected.plan_id)
+      await assessments.returnForRecalculation(selected.id, plan.version, returnReason.trim())
+      await plans.load(); setReturnReason(''); setNotice('Assessment returned to draft and marked superseded. Segments must change before a new run.')
+    } catch (error) { setLocalError(error instanceof Error ? error.message : 'Return failed') }
+    finally { setBusy(false) }
+  }
   return (
     <div className="page">
       <PageHeader eyebrow="IMMUTABLE MODEL RUNS" title="Assessment review" detail="Compare fixed snapshots, inspect risk evidence, and record explicit human decisions." />
@@ -47,8 +58,10 @@ export function AssessmentsPage() {
         </section>
         <section className="assessment-detail">
           {selected ? <>
-            <div className="assessment-title"><div><span className="eyebrow">ASSESSMENT #{selected.id}</span><h2>{selectedPlan?.plan_code ?? `Plan ${selected.plan_id}`}</h2><p>Created {new Date(selected.created_at).toLocaleString()} · input snapshot preserved</p></div><div className="score-dial"><span>COMPARATIVE INDEX</span><strong>{selected.comparative_score.toFixed(1)}</strong><small>{selected.highest_risk_band} · not a safety score</small></div></div>
+            <div className="assessment-title"><div><span className="eyebrow">ASSESSMENT #{selected.id}</span><h2>{selectedPlan?.plan_code ?? `Plan ${selected.plan_id}`}</h2><p>Created {new Date(selected.created_at).toLocaleString()} · input snapshot preserved{selected.supersedes_id ? ` · supersedes #${selected.supersedes_id}` : ''}{selected.superseded_by_id ? ` · superseded by #${selected.superseded_by_id}` : ''}</p></div><div className="score-dial"><span>COMPARATIVE INDEX</span><strong>{selected.comparative_score.toFixed(1)}</strong><small>{selected.highest_risk_band} · not a safety score</small></div></div>
+            {selected.assessment_status === 'superseded' && <Alert severity="warning" icon={<Undo2 size={18} />}>Returned to draft by supervisor{selected.returned_at ? ` on ${new Date(selected.returned_at).toLocaleString()}` : ''}: “{selected.return_reason}”. Snapshot retained; this run can no longer be submitted or approved.{selected.superseded_by_id ? ` Replaced by assessment #${selected.superseded_by_id}.` : ' Awaiting segment changes and a new model run.'}</Alert>}
             <div className="review-bar"><PlanStatusBadge status={selected.assessment_status} /><TextField label="Review reason" value={reason} onChange={(event) => setReason(event.target.value)} fullWidth />{isPlanner && selected.assessment_status === 'modeled' && <Button variant="contained" startIcon={<Send size={17} />} disabled={busy || reason.length < 3} onClick={() => void transition('submit')}>Submit</Button>}{isSupervisor && selected.assessment_status === 'pending_supervisor_review' && <Button variant="contained" color="secondary" startIcon={<CheckCheck size={17} />} disabled={busy || reason.length < 3} onClick={() => void transition('approve')}>Approve training</Button>}</div>
+            {isSupervisor && selected.assessment_status === 'pending_supervisor_review' && <div className="return-bar"><Undo2 size={17} /><TextField label="Return reason (required)" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} fullWidth placeholder="Why must the planner rework the exposure segments?" /><Button variant="outlined" color="warning" disabled={busy || returnReason.trim().length < 3} onClick={() => void returnToDraft()}>Return to draft</Button></div>}
             <section className="risk-section"><div className="subheading">Risk evidence <span>{selected.risk_flags.length}</span></div><div className="risk-list">{selected.risk_flags.map((flag) => <article className={`risk-row risk-${flag.band}`} key={flag.code}><ShieldAlert size={18} /><div><strong>{flag.code.replaceAll('_', ' ')}</strong><p>{flag.message}</p><small>{flag.evidence}</small></div><span>{flag.band}</span></article>)}</div></section>
             <div className="compartment-grid">{selected.compartment_loads.map((curve) => { const last = curve.points.at(-1); return <div key={curve.name}><span>{curve.name}</span><strong>{last?.total_inert_bar.toFixed(3)} bar</strong><small>N2 t½ {curve.n2_half_time_min} · He t½ {curve.he_half_time_min}</small></div> })}</div>
             <AssumptionPanel assumptions={selected.assumptions} />

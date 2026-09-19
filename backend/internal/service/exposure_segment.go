@@ -87,7 +87,7 @@ func (s *ExposureSegmentService) Update(ctx context.Context, id uint, req dto.Up
 	if err != nil {
 		return dto.ExposureSegmentResponse{}, util.Unprocessable("INVALID_GAS_MIX", err.Error(), err)
 	}
-	changes := map[string]any{"depth_m": req.DepthM, "duration_min": req.DurationMin, "ascent_rate_mmin": req.AscentRateMMin, "gas_mix_json": mixJSON, "segment_type": req.SegmentType, "notes": strings.TrimSpace(req.Notes)}
+	changes := map[string]any{"depth_m": req.DepthM, "duration_min": req.DurationMin, "ascent_rate_m_min": req.AscentRateMMin, "gas_mix_json": mixJSON, "segment_type": req.SegmentType, "notes": strings.TrimSpace(req.Notes)}
 	actor.Action = "exposure_segment.update"
 	actor.EntityType = "exposure_segment"
 	actor.BeforeSummary = fmt.Sprintf("plan=%d sequence=%d type=%s depth=%.1f duration=%.1f", current.PlanID, current.SequenceNo, current.SegmentType, current.DepthM, current.DurationMin)

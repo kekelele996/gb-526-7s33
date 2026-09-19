@@ -14,20 +14,31 @@ type RunAssessmentRequest struct {
 	PlanVersion uint `json:"plan_version" binding:"required,min=1"`
 }
 
+type ReturnAssessmentRequest struct {
+	Version uint   `json:"version" binding:"required,min=1"`
+	Reason  string `json:"reason" binding:"required,min=3,max=300"`
+}
+
 type AssessmentResponse struct {
-	ID               uint                             `json:"id"`
-	PlanID           uint                             `json:"plan_id"`
-	AssessmentStatus string                           `json:"assessment_status"`
-	AlgorithmVersion string                           `json:"algorithm_version"`
-	InputSnapshot    decompression.InputSnapshot      `json:"input_snapshot"`
-	CompartmentLoads []decompression.CompartmentCurve `json:"compartment_loads"`
-	RiskFlags        []decompression.RiskFlag         `json:"risk_flags"`
-	HighestRiskBand  constants.RiskBand               `json:"highest_risk_band"`
-	ComparativeScore float64                          `json:"comparative_score"`
-	Assumptions      decompression.ModelAssumptions   `json:"assumptions"`
-	CreatedAt        time.Time                        `json:"created_at"`
-	ReviewedAt       *time.Time                       `json:"reviewed_at"`
-	SafetyDisclaimer string                           `json:"safety_disclaimer"`
+	ID                uint                             `json:"id"`
+	PlanID            uint                             `json:"plan_id"`
+	AssessmentStatus  string                           `json:"assessment_status"`
+	AlgorithmVersion  string                           `json:"algorithm_version"`
+	InputSnapshot     decompression.InputSnapshot      `json:"input_snapshot"`
+	CompartmentLoads  []decompression.CompartmentCurve `json:"compartment_loads"`
+	RiskFlags         []decompression.RiskFlag         `json:"risk_flags"`
+	HighestRiskBand   constants.RiskBand               `json:"highest_risk_band"`
+	ComparativeScore  float64                          `json:"comparative_score"`
+	Assumptions       decompression.ModelAssumptions   `json:"assumptions"`
+	ReturnReason      string                           `json:"return_reason"`
+	ReturnedBy        *uint                            `json:"returned_by"`
+	ReturnedAt        *time.Time                       `json:"returned_at"`
+	ReturnPlanVersion uint                             `json:"return_plan_version"`
+	SupersededByID    *uint                            `json:"superseded_by_id"`
+	SupersedesID      *uint                            `json:"supersedes_id"`
+	CreatedAt         time.Time                        `json:"created_at"`
+	ReviewedAt        *time.Time                       `json:"reviewed_at"`
+	SafetyDisclaimer  string                           `json:"safety_disclaimer"`
 }
 
 type AssessmentComparison struct {
@@ -42,7 +53,7 @@ type AssessmentComparison struct {
 const SafetyDisclaimer = "Training and decision support only. This result is not medical advice, a certified dive table, a safety clearance, or an executable decompression instruction. Human supervisor review is required."
 
 func DecodeAssessment(item model.DecompressionAssessment) (AssessmentResponse, error) {
-	response := AssessmentResponse{ID: item.ID, PlanID: item.PlanID, AssessmentStatus: item.AssessmentStatus, AlgorithmVersion: item.AlgorithmVersion, HighestRiskBand: item.HighestRiskBand, ComparativeScore: item.ComparativeScore, CreatedAt: item.CreatedAt, ReviewedAt: item.ReviewedAt, SafetyDisclaimer: SafetyDisclaimer}
+	response := AssessmentResponse{ID: item.ID, PlanID: item.PlanID, AssessmentStatus: item.AssessmentStatus, AlgorithmVersion: item.AlgorithmVersion, HighestRiskBand: item.HighestRiskBand, ComparativeScore: item.ComparativeScore, ReturnReason: item.ReturnReason, ReturnedBy: item.ReturnedBy, ReturnedAt: item.ReturnedAt, ReturnPlanVersion: item.ReturnPlanVersion, SupersededByID: item.SupersededByID, SupersedesID: item.SupersedesID, CreatedAt: item.CreatedAt, ReviewedAt: item.ReviewedAt, SafetyDisclaimer: SafetyDisclaimer}
 	parts := []struct {
 		name string
 		raw  string
