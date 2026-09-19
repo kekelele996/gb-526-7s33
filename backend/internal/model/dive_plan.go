@@ -16,9 +16,14 @@ type DivePlan struct {
 	CreatedBy           uint                 `gorm:"not null;index" json:"created_by"`
 	ReviewedBy          *uint                `gorm:"index" json:"reviewed_by"`
 	Version             uint                 `gorm:"not null;default:1" json:"version"`
-	PlannedAt           time.Time            `gorm:"not null;index" json:"planned_at"`
-	CreatedAt           time.Time            `json:"created_at"`
-	UpdatedAt           time.Time            `json:"updated_at"`
+	// RerunGateVersion is set to the plan version at the moment a supervisor
+	// returns an assessment for rework. A new assessment can only run after an
+	// exposure-segment change bumps Version past this value. Zero means no
+	// outstanding rework gate (initial draft or gate already cleared).
+	RerunGateVersion uint      `gorm:"not null;default:0" json:"rerun_gate_version"`
+	PlannedAt        time.Time `gorm:"not null;index" json:"planned_at"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 func (DivePlan) TableName() string { return "dive_plans" }

@@ -17,6 +17,7 @@ type RunAssessmentRequest struct {
 type AssessmentResponse struct {
 	ID               uint                             `json:"id"`
 	PlanID           uint                             `json:"plan_id"`
+	Revision         uint                             `json:"revision"`
 	AssessmentStatus string                           `json:"assessment_status"`
 	AlgorithmVersion string                           `json:"algorithm_version"`
 	InputSnapshot    decompression.InputSnapshot      `json:"input_snapshot"`
@@ -25,6 +26,10 @@ type AssessmentResponse struct {
 	HighestRiskBand  constants.RiskBand               `json:"highest_risk_band"`
 	ComparativeScore float64                          `json:"comparative_score"`
 	Assumptions      decompression.ModelAssumptions   `json:"assumptions"`
+	SupersededByID   *uint                            `json:"superseded_by_id"`
+	ReturnedReason   string                           `json:"returned_reason"`
+	ReturnedBy       *uint                            `json:"returned_by"`
+	ReturnedAt       *time.Time                       `json:"returned_at"`
 	CreatedAt        time.Time                        `json:"created_at"`
 	ReviewedAt       *time.Time                       `json:"reviewed_at"`
 	SafetyDisclaimer string                           `json:"safety_disclaimer"`
@@ -42,7 +47,7 @@ type AssessmentComparison struct {
 const SafetyDisclaimer = "Training and decision support only. This result is not medical advice, a certified dive table, a safety clearance, or an executable decompression instruction. Human supervisor review is required."
 
 func DecodeAssessment(item model.DecompressionAssessment) (AssessmentResponse, error) {
-	response := AssessmentResponse{ID: item.ID, PlanID: item.PlanID, AssessmentStatus: item.AssessmentStatus, AlgorithmVersion: item.AlgorithmVersion, HighestRiskBand: item.HighestRiskBand, ComparativeScore: item.ComparativeScore, CreatedAt: item.CreatedAt, ReviewedAt: item.ReviewedAt, SafetyDisclaimer: SafetyDisclaimer}
+	response := AssessmentResponse{ID: item.ID, PlanID: item.PlanID, Revision: item.Revision, AssessmentStatus: item.AssessmentStatus, AlgorithmVersion: item.AlgorithmVersion, HighestRiskBand: item.HighestRiskBand, ComparativeScore: item.ComparativeScore, SupersededByID: item.SupersededByID, ReturnedReason: item.ReturnedReason, ReturnedBy: item.ReturnedBy, ReturnedAt: item.ReturnedAt, CreatedAt: item.CreatedAt, ReviewedAt: item.ReviewedAt, SafetyDisclaimer: SafetyDisclaimer}
 	parts := []struct {
 		name string
 		raw  string

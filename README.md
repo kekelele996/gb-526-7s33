@@ -34,9 +34,9 @@ docker compose down -v --remove-orphans
 ## 主要功能
 
 - `DiverProfile`：最小化训练资料、资格等级、默认气体假设和版本，不保存诊断性医疗记录。
-- `DivePlan`：工作地点表面压力、呼吸气体、计划时间、输入版本和完整状态流。
+- `DivePlan`：工作地点表面压力、呼吸气体、计划时间、输入版本、重算闸门（`rerun_gate_version`）和完整状态流。
 - `ExposureSegment`：同一计划内唯一且连续的序号，严格校验深度、时长、上升速率、气体比例和段间连续性。
-- `DecompressionAssessment`：不可覆盖的输入快照、六舱负荷曲线、风险证据、比较指数、算法版本和假设。
+- `DecompressionAssessment`：不可覆盖的输入快照、六舱负荷曲线、风险证据、比较指数、算法版本和假设；被退回的版本保留全部证据并标记 `superseded`，通过 `revision` 表达版本先后。
 - 五个业务页：训练档案、计划编排、暴露剖面、评估复核、审计轨迹；图表只消费真实 API 数据。
 - JWT/RBAC、请求 ID、结构化访问日志、panic recovery、本地限流、统一错误码、事务、乐观锁和不可普通删除的审计事件。
 
@@ -58,9 +58,9 @@ docker compose down -v --remove-orphans
 
 `PlanStatus = draft | modeled | pending_supervisor_review | approved_for_training | archived`
 
-- 数据库：`dive_plans.plan_status`、`decompression_assessments.assessment_status` 均使用显式 `CHECK` 约束。
-- 后端：`backend/internal/constants/plan.go`，并贯穿 `model/dive_plan.go`、`repository/dive_plan.go`、`repository/decompression_assessment.go`、对应 service/handler/router。
-- 前端：`frontend/src/types/plan.ts`、`stores/plan.ts`、`stores/assessment.ts`、`components/common/PlanStatusBadge.tsx`、`pages/PlansPage.tsx`、`pages/AssessmentsPage.tsx`、`pages/AuditPage.tsx`。
+- 数据库：`dive_plans.plan_status`、`decompression_assessments.assessment_status` 均使用显式 `CHECK` 约束；评估约束额外允许 `superseded`。
+- 后端：`backend/internal/constants/plan.go`（含 `AssessmentSuperseded` 与 `CanTransitionAssessment`），并贯穿 `model/dive_plan.go`、`model/decompression_assessment.go`、`repository/dive_plan.go`、`repository/decompression_assessment.go`、对应 service/handler/router。
+- 前端：`frontend/src/types/plan.ts`、`types/assessment.ts`、`utils/assessment.ts`、`stores/plan.ts`、`stores/assessment.ts`、`components/common/PlanStatusBadge.tsx`、`pages/PlansPage.tsx`、`pages/ExposuresPage.tsx`、`pages/AssessmentsPage.tsx`、`pages/AuditPage.tsx`。
 
 `RiskBand = informational | caution | elevated | invalid`
 
@@ -72,8 +72,17 @@ docker compose down -v --remove-orphans
 
 ```text
 draft -> modeled -> pending_supervisor_review -> approved_for_training -> archived
-                 \-> draft（退回）
+                 ↑                |
+                 +---- 退回 ------+ （仅主管，必须填写原因）
 ```
+
+退回重算闭环规则：
+
+1. 只有 `pending_supervisor_review` 可被主管退回；`POST /assessments/:id/return` 必须携带至少 3 个字符的原因，计划员调用返回 `FORBIDDEN`。
+2. 退回在单一事务内完成：计划回到 `draft` 并把 `rerun_gate_version` 钉到新版本，评估标记 `superseded`、写入 `returned_reason/returned_by/returned_at`，同时写两条审计（评估 + 计划）。原评估与输入快照原样保留，任何一步失败整体回滚。
+3. 计划员必须先修改暴露段（新增、编辑或重排，输入版本前进）才能重新运行模型；未改段运行返回 `SEGMENT_CHANGE_REQUIRED`，旧评估再提交/批准返回 `ASSESSMENT_SUPERSEDED`。
+4. 新评估以 `revision = 旧版本 + 1` 生成，旧评估回填 `superseded_by_id`；计划恢复 `modeled`，提交后才再次进入待审。
+5. 并发退回、批准、改段和重算全部走状态+版本条件更新，只有一方成功，失败时计划、段、评估和审计均不变。
 
 模型输入失败不创建评估，并保持或恢复 `draft`；主管批准在单一事务中使用状态和版本条件更新，同时写审计理由。
 
@@ -92,9 +101,10 @@ draft -> modeled -> pending_supervisor_review -> approved_for_training -> archiv
 | `GET` | `/api/v1/assessments/:id/compare?other_id=` | 比较两个不可覆盖结果 |
 | `POST` | `/api/v1/assessments/:id/submit` | 计划员提交主管复核 |
 | `POST` | `/api/v1/assessments/:id/approve` | 主管人工批准训练用途 |
+| `POST` | `/api/v1/assessments/:id/return` | 主管把待审评估退回起草（必须填写原因） |
 | `GET` | `/api/v1/audit-events` | 主管/管理员读取不可删除审计轨迹 |
 
-统一响应包含 `data` 或 `error` 及 `request_id`。主要错误码包括 `INVALID_GAS_MIX`、`SEGMENT_SEQUENCE_CONFLICT`、`MODEL_INPUT_INVALID`、`PLAN_VERSION_CONFLICT`、`INVALID_PLAN_TRANSITION`、`AUTH_REQUIRED` 和 `FORBIDDEN`。
+统一响应包含 `data` 或 `error` 及 `request_id`。主要错误码包括 `INVALID_GAS_MIX`、`SEGMENT_SEQUENCE_CONFLICT`、`MODEL_INPUT_INVALID`、`PLAN_VERSION_CONFLICT`、`INVALID_PLAN_TRANSITION`、`SEGMENT_CHANGE_REQUIRED`、`ASSESSMENT_SUPERSEDED`、`ASSESSMENT_STATE_CONFLICT`、`RETURN_REASON_REQUIRED`、`AUTH_REQUIRED` 和 `FORBIDDEN`。
 
 ## 技术栈与目录
 

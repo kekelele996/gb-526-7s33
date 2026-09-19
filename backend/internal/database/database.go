@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"commercial-diving-decompression-control/backend/internal/audit"
@@ -70,6 +71,68 @@ func backfillRiskBands(db *gorm.DB) error {
 func migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(&auth.User{}, &model.DiverProfile{}, &model.DivePlan{}, &model.ExposureSegment{}, &model.DecompressionAssessment{}, &audit.Event{}); err != nil {
 		return fmt.Errorf("auto migrate database: %w", err)
+	}
+	if db.Dialector.Name() == "postgres" {
+		if err := replaceAssessmentStatusCheck(db); err != nil {
+			return err
+		}
+	}
+	if err := backfillAssessmentRevisions(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+// replaceAssessmentStatusCheck swaps the pre-rework-loop CHECK constraint for
+// one that also allows 'superseded'. GORM keeps the generated constraint name
+// stable, so AutoMigrate treats the old definition as present and skips it;
+// compare the stored definition and replace it when 'superseded' is missing.
+func replaceAssessmentStatusCheck(db *gorm.DB) error {
+	type constraintRow struct {
+		Name string
+		Def  string
+	}
+	var rows []constraintRow
+	if err := db.Raw(`
+		SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS def
+		FROM pg_constraint con
+		JOIN pg_class rel ON rel.oid = con.conrelid
+		WHERE rel.relname = ? AND con.contype = 'c' AND pg_get_constraintdef(con.oid) LIKE '%assessment_status%'
+	`, model.DecompressionAssessment{}.TableName()).Scan(&rows).Error; err != nil {
+		return fmt.Errorf("locate assessment_status check constraint: %w", err)
+	}
+	for _, row := range rows {
+		if strings.Contains(row.Def, constants.AssessmentSuperseded) {
+			continue
+		}
+		if err := db.Exec(fmt.Sprintf(`ALTER TABLE "decompression_assessments" DROP CONSTRAINT %q`, row.Name)).Error; err != nil {
+			return fmt.Errorf("drop obsolete assessment_status check constraint: %w", err)
+		}
+		if err := db.Exec(`ALTER TABLE "decompression_assessments" ADD CONSTRAINT "chk__decompression_assessments_assessment_status" CHECK (assessment_status IN ('modeled','pending_supervisor_review','approved_for_training','archived','superseded'))`).Error; err != nil {
+			return fmt.Errorf("add superseded-aware assessment_status check constraint: %w", err)
+		}
+	}
+	return nil
+}
+
+// backfillAssessmentRevisions assigns revision 1..N by creation order within
+// each plan for rows created before revisions existed. New rows are assigned
+// inside the run transaction, so untouched plans stay at revision zero risk.
+func backfillAssessmentRevisions(db *gorm.DB) error {
+	var plans []uint
+	if err := db.Model(&model.DivePlan{}).Pluck("id", &plans).Error; err != nil {
+		return fmt.Errorf("list plans for revision backfill: %w", err)
+	}
+	for _, planID := range plans {
+		var ids []uint
+		if err := db.Model(&model.DecompressionAssessment{}).Where("plan_id = ?", planID).Order("created_at ASC, id ASC").Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("load assessments for revision backfill: %w", err)
+		}
+		for index, id := range ids {
+			if err := db.Model(&model.DecompressionAssessment{}).Where("id = ? AND revision = 0", id).Update("revision", index+1).Error; err != nil {
+				return fmt.Errorf("backfill assessment %d revision: %w", id, err)
+			}
+		}
 	}
 	return nil
 }

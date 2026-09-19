@@ -43,6 +43,7 @@ export interface InputSnapshot {
 export interface DecompressionAssessment {
   id: number
   plan_id: number
+  revision: number
   assessment_status: string
   algorithm_version: string
   input_snapshot: InputSnapshot
@@ -51,6 +52,10 @@ export interface DecompressionAssessment {
   highest_risk_band: RiskBand
   comparative_score: number
   assumptions: ModelAssumptions
+  superseded_by_id?: number
+  returned_reason: string
+  returned_by?: number
+  returned_at?: string
   created_at: string
   reviewed_at?: string
   safety_disclaimer: string

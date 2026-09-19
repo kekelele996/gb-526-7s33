@@ -11,5 +11,6 @@ const labels: Record<PlanStatus, string> = {
 
 export function PlanStatusBadge({ status }: { status: PlanStatus | string }) {
   const value = status as PlanStatus
-  return <Chip size="small" className={`status-badge status-${value}`} label={labels[value] ?? status.replaceAll('_', ' ').toUpperCase()} />
+  const label = labels[value] ?? (status === 'superseded' ? 'SUPERSEDED / RETURNED' : status.replaceAll('_', ' ').toUpperCase())
+  return <Chip size="small" className={`status-badge status-${value}`} label={label} />
 }

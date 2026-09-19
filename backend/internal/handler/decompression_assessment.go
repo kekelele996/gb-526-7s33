@@ -108,6 +108,23 @@ func (h *DecompressionAssessmentHandler) Approve(c *gin.Context) {
 	util.OK(c, item)
 }
 
+func (h *DecompressionAssessmentHandler) ReturnForRework(c *gin.Context) {
+	id, ok := util.ParamID(c)
+	if !ok {
+		return
+	}
+	var req dto.TransitionPlanRequest
+	if !util.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.service.ReturnForRework(c.Request.Context(), id, req, auditActor(c))
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	util.OK(c, item)
+}
+
 func (h *DecompressionAssessmentHandler) Compare(c *gin.Context) {
 	leftID, ok := util.ParamID(c)
 	if !ok {

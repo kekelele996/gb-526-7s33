@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Alert, Button, CircularProgress, IconButton, MenuItem, TextField, Tooltip } from '@mui/material'
-import { ArrowDown, ArrowUp, Beaker, CirclePlus, Play, Route, Rows3 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Beaker, CirclePlus, History, Play, RotateCcw, Route, Rows3 } from 'lucide-react'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PlanStatusBadge } from '@/components/common/PlanStatusBadge'
 import { useAuth } from '@/hooks/useAuth'
@@ -10,6 +10,7 @@ import { usePlanStore } from '@/stores/plan'
 import { useSegmentStore } from '@/stores/segment'
 import type { CreateDivePlan } from '@/types/plan'
 import type { CreateExposureSegment, SegmentType } from '@/types/segment'
+import { isAwaitingSegmentChange } from '@/utils/assessment'
 
 const planInitial: CreateDivePlan = { plan_code: '', diver_profile_id: 0, worksite_pressure_bar: 1, breathing_mix: { o2: .21, he: 0, n2: .79 }, planned_at: new Date(Date.now() + 86_400_000).toISOString().slice(0, 16) }
 const segmentInitial = { depth_m: 0, duration_min: 5, ascent_rate_mmin: 0, gas_mix: { o2: .21, he: 0, n2: .79 }, segment_type: 'bottom' as SegmentType, notes: '' }
@@ -60,10 +61,11 @@ export function PlansPage() {
   const model = async () => {
     if (!selected) return
     setBusy(true); setLocalError(null); setNotice(null)
-    try { const result = await runAssessment(selected.id, selected.version); await plans.load(); setNotice(`Immutable assessment #${result.id} created with comparative index ${result.comparative_score.toFixed(1)}.`) }
+    try { const result = await runAssessment(selected.id, selected.version); await plans.load(); setNotice(`Immutable assessment #${result.id} (revision v${result.revision}) created with comparative index ${result.comparative_score.toFixed(1)}.`) }
     catch (error) { setLocalError(error instanceof Error ? error.message : 'Model run failed') }
     finally { setBusy(false) }
   }
+  const awaitingSegmentChange = selected ? isAwaitingSegmentChange(selected) : false
   const mixTotal = useMemo(() => planForm.breathing_mix.o2 + planForm.breathing_mix.he, [planForm.breathing_mix])
   return (
     <div className="page">
@@ -89,7 +91,8 @@ export function PlansPage() {
         <section className="sequence-board">
           {selected ? <>
             <div className="sequence-head"><div><span className="eyebrow">PLAN INPUT / V{selected.version}</span><h2>{selected.plan_code}</h2><p>{selected.diver_profile_code} · {selected.worksite_pressure_bar.toFixed(2)} bar · O2 {(selected.breathing_mix.o2 * 100).toFixed(0)} / He {(selected.breathing_mix.he * 100).toFixed(0)}</p></div><PlanStatusBadge status={selected.plan_status} /></div>
-            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span></div>{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0}>Run model</Button></div>}</div>
+            {awaitingSegmentChange && <div className="gate-banner"><RotateCcw size={16} /><span>Supervisor returned this plan to draft at input v{selected.rerun_gate_version}. Change at least one exposure segment (add, edit, or reorder) to advance past v{selected.rerun_gate_version}; the model stays locked and the old assessment can no longer be submitted or approved.</span></div>}
+            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span>{awaitingSegmentChange && <span className="gate-token"><History size={13} /> gate v{selected.rerun_gate_version} → edit segments to unlock rerun</span>}</div>{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Tooltip title={awaitingSegmentChange ? 'An exposure segment must change before the model can rerun' : 'Run the deterministic model'}><span><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0 || awaitingSegmentChange}>Run model</Button></span></Tooltip></div>}</div>
             {formMode === 'segment' && <form className="segment-form" onSubmit={createSegment}>
               <span className="sequence-token">{String(segments.items.length + 1).padStart(2, '0')}</span>
               <TextField select label="Type" value={segmentForm.segment_type} onChange={(event) => setSegmentForm({ ...segmentForm, segment_type: event.target.value as SegmentType })}>{['descent', 'bottom', 'transit', 'ascent', 'surface'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField>

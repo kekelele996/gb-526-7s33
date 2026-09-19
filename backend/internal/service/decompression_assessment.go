@@ -62,6 +62,9 @@ func (s *DecompressionAssessmentService) Run(ctx context.Context, planID uint, r
 	if plan.PlanStatus != constants.PlanDraft {
 		return dto.AssessmentResponse{}, util.Conflict("PLAN_NOT_DRAFT", "only a draft plan can run a new immutable assessment", nil)
 	}
+	if plan.RerunGateVersion >= plan.Version {
+		return dto.AssessmentResponse{}, util.Conflict("SEGMENT_CHANGE_REQUIRED", "change at least one exposure segment before rerunning a returned assessment", nil)
+	}
 	profile, err := s.profiles.Get(ctx, plan.DiverProfileID)
 	if err != nil {
 		return dto.AssessmentResponse{}, err
@@ -83,7 +86,7 @@ func (s *DecompressionAssessmentService) Run(ctx context.Context, planID uint, r
 	item := model.DecompressionAssessment{PlanID: planID, AssessmentStatus: string(constants.PlanModeled), AlgorithmVersion: s.modelVersion, InputSnapshotJSON: snapshotJSON, CompartmentLoadsJSON: curvesJSON, RiskFlagsJSON: flagsJSON, HighestRiskBand: decompression.HighestRiskBand(result.RiskFlags), ComparativeScore: result.ComparativeScore, AssumptionsJSON: assumptionsJSON}
 	actor.Action = "decompression_assessment.run"
 	actor.EntityType = "decompression_assessment"
-	actor.BeforeSummary = fmt.Sprintf("plan=%d version=%d algorithm=%s segments=%d", planID, plan.Version, s.modelVersion, len(segments))
+	actor.BeforeSummary = fmt.Sprintf("plan=%d version=%d gate_version=%d algorithm=%s segments=%d", planID, plan.Version, plan.RerunGateVersion, s.modelVersion, len(segments))
 	actor.AfterSummary = fmt.Sprintf("score=%.2f compartments=%d flags=%d immutable=true", result.ComparativeScore, len(result.Curves), len(result.RiskFlags))
 	if err := s.assessments.CreateModeled(ctx, plan, &item, actor); err != nil {
 		return dto.AssessmentResponse{}, err
@@ -99,6 +102,53 @@ func (s *DecompressionAssessmentService) Approve(ctx context.Context, id uint, r
 	return s.transition(ctx, id, req, constants.PlanApprovedTraining, actor)
 }
 
+// ReturnForRework is the supervisor-only leg of the rework loop: a pending
+// review is sent back to draft with a mandatory reason. The assessment and its
+// input snapshot remain preserved and become superseded; the plan cannot run a
+// replacement assessment until exposure segments change.
+func (s *DecompressionAssessmentService) ReturnForRework(ctx context.Context, id uint, req dto.TransitionPlanRequest, actor audit.Entry) (dto.AssessmentResponse, error) {
+	if req.TargetStatus != constants.PlanDraft {
+		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", "return endpoint requires target_status draft", nil)
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if len(reason) < 3 {
+		return dto.AssessmentResponse{}, util.BadRequest("RETURN_REASON_REQUIRED", "a return reason of at least 3 characters is required", nil)
+	}
+	assessment, err := s.assessments.Get(ctx, id)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	plan, err := s.plans.Get(ctx, assessment.PlanID)
+	if err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	if plan.Version != req.Version {
+		return dto.AssessmentResponse{}, util.Conflict("PLAN_VERSION_CONFLICT", "dive plan was changed by another user", nil)
+	}
+	if assessment.AssessmentStatus == constants.AssessmentSuperseded {
+		return dto.AssessmentResponse{}, util.Conflict("ASSESSMENT_SUPERSEDED", "a superseded assessment can no longer be reviewed or returned", nil)
+	}
+	if !constants.CanTransitionAssessment(assessment.AssessmentStatus, constants.PlanDraft) || plan.PlanStatus != constants.PlanPendingReview {
+		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", fmt.Sprintf("only a pending supervisor review can be returned, plan is %s", plan.PlanStatus), nil)
+	}
+	if assessment.AssessmentStatus != string(plan.PlanStatus) {
+		return dto.AssessmentResponse{}, util.Conflict("ASSESSMENT_STATE_CONFLICT", "assessment and plan review states do not match", nil)
+	}
+	assessmentEntry := actor
+	assessmentEntry.Action = "decompression_assessment.return_for_rework"
+	assessmentEntry.EntityType = "decompression_assessment"
+	assessmentEntry.BeforeSummary = string(plan.PlanStatus)
+	assessmentEntry.AfterSummary = fmt.Sprintf("%s reason=%s snapshot=preserved", constants.AssessmentSuperseded, reason)
+	planEntry := actor
+	planEntry.Action = "dive_plan.transition"
+	planEntry.BeforeSummary = fmt.Sprintf("%s version=%d", plan.PlanStatus, plan.Version)
+	planEntry.AfterSummary = fmt.Sprintf("%s rerun_gate_version=%d reason=%s", constants.PlanDraft, plan.Version+1, reason)
+	if err := s.assessments.ReturnForRework(ctx, plan, assessment, reason, actor.ActorID, assessmentEntry, planEntry); err != nil {
+		return dto.AssessmentResponse{}, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *DecompressionAssessmentService) transition(ctx context.Context, id uint, req dto.TransitionPlanRequest, target constants.PlanStatus, actor audit.Entry) (dto.AssessmentResponse, error) {
 	if req.TargetStatus != target {
 		return dto.AssessmentResponse{}, util.Unprocessable("INVALID_PLAN_TRANSITION", fmt.Sprintf("endpoint requires target_status %s", target), nil)
@@ -106,6 +156,9 @@ func (s *DecompressionAssessmentService) transition(ctx context.Context, id uint
 	assessment, err := s.assessments.Get(ctx, id)
 	if err != nil {
 		return dto.AssessmentResponse{}, err
+	}
+	if assessment.AssessmentStatus == constants.AssessmentSuperseded {
+		return dto.AssessmentResponse{}, util.Conflict("ASSESSMENT_SUPERSEDED", "a superseded assessment can no longer be submitted or approved", nil)
 	}
 	plan, err := s.plans.Get(ctx, assessment.PlanID)
 	if err != nil {

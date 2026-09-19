@@ -1,11 +1,14 @@
 import { useEffect } from 'react'
 import { useAssessmentStore } from '@/stores/assessment'
 
-export function useAssessmentPolling(active = true, planId?: number) {
+export function useAssessmentPolling(active = true, planId?: number, onTick?: () => void) {
   const load = useAssessmentStore((state) => state.load)
   useEffect(() => {
     if (!active) return
-    const timer = window.setInterval(() => { void load(planId) }, 10_000)
+    const timer = window.setInterval(() => {
+      void load(planId)
+      onTick?.()
+    }, 10_000)
     return () => window.clearInterval(timer)
-  }, [active, load, planId])
+  }, [active, load, planId, onTick])
 }
